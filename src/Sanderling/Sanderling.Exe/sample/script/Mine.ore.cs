@@ -13,6 +13,7 @@
 
 using Parse = Sanderling.Parse;
 using System.IO;
+using BotSharp.ToScript.Extension;
 //	begin of configuration section ->
 
 //	The bot uses the bookmarks from the menu which is opened from the button in the 'System info' panel.
