@@ -24,7 +24,7 @@ namespace Sanderling.Exe
 
 	partial class App
 	{
-		SimpleSensorServerDispatcher SensorServerDispatcher;
+		SimpleInterfaceServerDispatcher SensorServerDispatcher;
 
 		readonly object LicenseClientLock = new object();
 
@@ -84,7 +84,7 @@ namespace Sanderling.Exe
 				if (MemoryMeasurementLast?.Begin < MeasurementRecentEnoughTime)
 					return MeasurementRecentEnoughTime;
 
-				return MemoryMeasurementLast?.End + 4000;
+				return (MemoryMeasurementLast?.End + 4000) ?? 0;
 			}
 		}
 
@@ -139,6 +139,19 @@ namespace Sanderling.Exe
 				Math.Max(FromScriptMeasurementInvalidationTime ?? int.MinValue, GetTimeStopwatch() + Math.Min(DelayToMeasurementMilli, 10000));
 		}
 
+		void InterfaceExchange()
+		{
+			LicenseClientExchange();
+
+			var EveOnlineClientProcessId = this.EveOnlineClientProcessId;
+
+			var RequestedMeasurementTime = this.RequestedMeasurementTime ?? 0;
+
+			if (EveOnlineClientProcessId.HasValue &&
+				!(MemoryMeasurementLastAge < 1000) && RequestedMeasurementTime <= Bib3.Glob.StopwatchZaitMiliSictInt())
+				Task.Run(() => MeasurementMemoryTake(EveOnlineClientProcessId.Value, RequestedMeasurementTime));
+		}
+
 		void LicenseClientExchange()
 		{
 			lock (LicenseClientLock)
@@ -154,12 +167,15 @@ namespace Sanderling.Exe
 
 				if (null == LicenseClient)
 				{
-					LicenseClient = new PropertyGenTimespanInt64<LicenseClient>(new LicenseClient(), Time, Time);
+					LicenseClient = new PropertyGenTimespanInt64<LicenseClient>(new LicenseClient
+					{
+						Request = ConfigDefaultConstruct()?.LicenseClient?.Request,
+					}, Time, Time);
 
-					SensorServerDispatcher = new SimpleSensorServerDispatcher()
+					SensorServerDispatcher = new SimpleInterfaceServerDispatcher()
 					{
 						LicenseClient = LicenseClient.Value,
-						SensorAppManager = SensorAppManager,
+						InterfaceAppManager = SensorAppManager,
 					};
 				}
 
@@ -180,19 +196,25 @@ namespace Sanderling.Exe
 
 					LicenseClient.Value.Timeout = 4000;
 
-					SensorServerDispatcher.Exchange(
-						EveOnlineClientProcessId,
-						RequestedMeasurementTime ?? Int64.MaxValue,
-						CallbackMeasurementMemoryNew);
+					SensorServerDispatcher.Exchange();
 				});
 			}
 		}
 
-		void CallbackMeasurementMemoryNew(FromProcessMeasurement<MemoryStruct.IMemoryMeasurement> Measurement)
+		void MeasurementMemoryTake(int processId, Int64 measurementBeginTimeMinMilli)
 		{
-			MemoryMeasurementLast = Measurement.MapValue(Value => new Interface.MemoryMeasurementEvaluation(
-				Measurement,
-				MemoryMeasurementLast?.Value?.MemoryMeasurementAccumulation as Accumulator.MemoryMeasurementAccumulator));
+			FromProcessMeasurement<MemoryStruct.IMemoryMeasurement> MeasurementRaw = null;
+
+			try
+			{
+				MeasurementRaw = SensorServerDispatcher.InterfaceAppManager.MeasurementTake(processId, measurementBeginTimeMinMilli);
+			}
+			finally
+			{
+				MemoryMeasurementLast = MeasurementRaw?.MapValue(Value => new Interface.MemoryMeasurementEvaluation(
+					MeasurementRaw,
+					MemoryMeasurementLast?.Value?.MemoryMeasurementAccumulation as Accumulator.MemoryMeasurementAccumulator));
+			}
 		}
 	}
 }
