@@ -11,15 +11,26 @@
 //	+arrange windows to not occlude modules or info panels.
 //	+in the ship UI, disable "Display Passive Modules" and disable "Display Empty Slots" and enable "Display Module Tooltips". The bot uses the module tooltips to automatically identify the properties of the modules.
 
+using BotSharp.ToScript.Extension;
 using Parse = Sanderling.Parse;
 
 //	begin of configuration section ->
 
 //	The bot uses the bookmarks from the menu which is opened from the button in the 'System info' panel.
-//	Bookmark to station where ore should be transfered to item hangar.
-string StationBookmark = "station_bookmark_name";
-//	Bookmark to place with asteroids. 
-string MiningSiteBookmark = "belt_bookmark_name"; 
+
+//	Bookmarks of places to mine. Add additional bookmarks separated by comma.
+string[] SetMiningSiteBookmark = new[] {
+	"mining_site_bookmark_name",
+	};
+
+//	Bookmark of location where ore should be unloaded.
+string UnloadBookmark = "station_or_POS_bookmark_name";
+
+//	Name of the container to unload to as shown in inventory.
+string UnloadDestContainerName = "Item Hangar";
+
+//	Bookmark of place to retreat to to prevent ship loss.
+string RetreatBookmark = UnloadBookmark;
 
 //	The bot loads this preset to the active tab. 
 string OverviewPreset = null;
@@ -61,7 +72,7 @@ for(;;)
 	if(EmergencyWarpOutEnabled)
 		if(!(Measurement?.IsDocked ?? false))
 		{
-			InitiateDockToOrWarpToBookmark(StationBookmark);
+			InitiateDockToOrWarpToBookmark(RetreatBookmark);
 			continue;
 		}
 	
@@ -103,7 +114,7 @@ Func<object>	MainStep()
 {
 	if(Measurement?.IsDocked ?? false)
 	{
-		UnloadToHangar();
+		InInventoryUnloadItems();
 
 		if (EmergencyWarpOutEnabled)
 			return BotStopActivity;
@@ -128,12 +139,12 @@ Func<object>	MainStep()
 		if(OreHoldFilledForOffload)
 		{
 			if(ReadyForManeuver)
-				InitiateDockToOrWarpToBookmark(StationBookmark);
+				InitiateDockToOrWarpToBookmark(UnloadBookmark);
 			return MainStep;
 		}
 		
 		if(!(0 < ListAsteroidOverviewEntry?.Length))
-			InitiateDockToOrWarpToBookmark(MiningSiteBookmark);
+			InitiateWarpToRandomMiningSite();
 	}
 
 	ModuleMeasureAllTooltip();
@@ -143,6 +154,12 @@ Func<object>	MainStep()
 
 	return InBeltMineStep;
 }
+
+int RandomInt() => new Random((int)Host.GetTimeContinuousMilli()).Next();
+
+T RandomElement<T>(T[] array) =>
+	!(0 < array?.Length) ? default(T) : array[RandomInt() % array.Length];
+
 
 void CloseModalUIElement()
 {
@@ -395,27 +412,41 @@ void EnsureWindowInventoryOpenOreHold()
 		Sanderling.MouseClickLeft(InventoryActiveShipOreHold);
 }
 
-void UnloadToHangar()
+//	sample label text: Intensive Reprocessing Array <color=#66FFFFFF>1,123 m</color>
+string InventoryContainerLabelRegexPatternFromContainerName(string containerName) =>
+	@"^\s*" + Regex.Escape(containerName) + @"\s*($|\<)";
+
+void InInventoryUnloadItems() => InInventoryUnloadItemsTo(UnloadDestContainerName);
+
+void InInventoryUnloadItemsTo(string DestinationContainerName)
 {
-	Host.Log("unload to hangar.");
+	Host.Log("unload items to '" + DestinationContainerName + "'.");
 
 	EnsureWindowInventoryOpenOreHold();
 
 	for (;;)
 	{
-		var	OreHoldItem = WindowInventory?.SelectedRightInventory?.ListView?.Entry?.FirstOrDefault();
-		var	ItemHangar = WindowInventory?.ItemHangarEntry?.LabelText?.Largest();
+		var OreHoldItem = WindowInventory?.SelectedRightInventory?.ListView?.Entry?.FirstOrDefault();
 
-		if (null == ItemHangar)
-			Host.Log("error: item hangar not found");
+		var DestinationContainerLabelRegexPattern =
+			InventoryContainerLabelRegexPatternFromContainerName(DestinationContainerName);
+
+		var DestinationContainer =
+			WindowInventory?.LeftTreeListEntry?.SelectMany(entry => new[] { entry }.Concat(entry.EnumerateChildNodeTransitive()))
+			?.FirstOrDefault(entry => entry?.Text?.RegexMatchSuccessIgnoreCase(DestinationContainerLabelRegexPattern) ?? false);
+
+		if (null == DestinationContainer)
+			Host.Log("error: Inventory entry labeled '" + DestinationContainerName + "' not found");
 
 		if(null == OreHoldItem)
-			//	0 items in OreHold
-			break;
-		
-		Sanderling.MouseDragAndDrop(OreHoldItem, ItemHangar);
+			break;    //    0 items in OreHold
+
+		Sanderling.MouseDragAndDrop(OreHoldItem, DestinationContainer);
 	}
 }
+
+bool InitiateWarpToRandomMiningSite()	=>
+	InitiateDockToOrWarpToBookmark(RandomElement(SetMiningSiteBookmark));
 
 bool InitiateDockToOrWarpToBookmark(string Bookmark)
 {
