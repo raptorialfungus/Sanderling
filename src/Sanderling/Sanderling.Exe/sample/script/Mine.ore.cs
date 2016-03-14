@@ -12,17 +12,25 @@
 //	+in the ship UI, disable "Display Passive Modules" and disable "Display Empty Slots" and enable "Display Module Tooltips". The bot uses the module tooltips to automatically identify the properties of the modules.
 
 using Parse = Sanderling.Parse;
-
+using System.IO;
 //	begin of configuration section ->
 
 //	The bot uses the bookmarks from the menu which is opened from the button in the 'System info' panel.
 //	Bookmark to station where ore should be transfered to item hangar.
-string StationBookmark = "station_bookmark_name";
+DateTime StartTime = DateTime.Now;
+TimeSpan SessionTime;
+DateTime t1 = DateTime.Now;
+DateTime t2 = Convert.ToDateTime("13:50");
+int CurrentISKInt = 0;
+int TransferredISKInt = 0;
+Boolean stopTime = true; //Stop or not at t2-time
+string StationBookmark = "Station";
 //	Bookmark to place with asteroids. 
-string MiningSiteBookmark = "belt_bookmark_name"; 
+string MiningSiteBookmark = "Belt1"; 
+string[] MiningSiteBookmarks = { "Belt1", "Belt2", "Belt3", "Belt4", "Belt5", "Belt6", "Belt7" };
 
 //	The bot loads this preset to the active tab. 
-string OverviewPreset = null;
+string OverviewPreset = "miningx";
 
 var ActivateHardener = true;
 
@@ -30,7 +38,7 @@ var ActivateHardener = true;
 var DefenseEnterHitpointThresholdPercent = 85;
 var DefenseExitHitpointThresholdPercent = 90;
 
-var EmergencyWarpOutHitpointPercent = 60;
+var EmergencyWarpOutHitpointPercent = 40;
 
 var FightAllRats = false;	//	when this is set to true, the bot will attack rats independent of shield hp.
 
@@ -43,18 +51,45 @@ Func<object> NextActivity = MainStep;
 for(;;)
 {
 	MemoryUpdate();
-
-	Host.Log(
-		"ore hold fill: " + OreHoldFillPercent + "%" +
-		", mining range: " + MiningRange +
-		", mining modules (inactive): " + SetModuleMiner?.Length + "(" + SetModuleMinerInactive?.Length + ")" +
-		", shield.hp: " + ShieldHpPercent + "%" +
-		", EWO: " + EmergencyWarpOutEnabled.ToString() + 
-		", JLA: " + JammedLastAge +
-		", overview.rats: " + ListRatOverviewEntry?.Length +
-		", overview.roids: " + ListAsteroidOverviewEntry?.Length +
-		", offload count: " + OffloadCount +
-		", nextAct: " + NextActivity?.Method?.Name);
+      SessionTime =  DateTime.Now - StartTime;
+	Host.Log("Session time: " + SessionTime.Hours.ToString() + ":" + SessionTime.Minutes.ToString().PadLeft(2,'0') +
+		", ore hold: " + OreHoldFillPercent + "%" +
+		", range: " + MiningRange +
+		", modules (off): " + SetModuleMiner?.Length + "(" + SetModuleMinerInactive?.Length + ")" +
+		", shield: " + ShieldHpPercent + "%" +
+//		", EWO: " + EmergencyWarpOutEnabled.ToString() + 
+//		", JLA: " + JammedLastAge +
+//  CurrentISKInt=Convert.ToInt32(Math.Round(/(DateTime.Now-StartTime).TotalSeconds*60*60,0));
+		", ISK: " + Math.Round((TransferredISKInt+CurrentISKInt)/(double)1000,0) + 
+		"k (" + Math.Round((TransferredISKInt+CurrentISKInt)/(DateTime.Now-StartTime).TotalSeconds*60*60/1000,0) + 
+		"k/h), rats: " + ListRatOverviewEntry?.Length +
+		", ateroids: " + ListAsteroidOverviewEntry?.Length +
+		", offload count: " + OffloadCount);
+		Log("Session time: " + SessionTime.Hours.ToString() + ":" + SessionTime.Minutes.ToString().PadLeft(2,'0') +
+		", ore hold: " + OreHoldFillPercent + "%" +
+		", range: " + MiningRange +
+		", modules (off): " + SetModuleMiner?.Length + "(" + SetModuleMinerInactive?.Length + ")" +
+		", shield: " + ShieldHpPercent + "%" +
+//		", EWO: " + EmergencyWarpOutEnabled.ToString() + 
+//		", JLA: " + JammedLastAge +
+//  CurrentISKInt=Convert.ToInt32(Math.Round(/(DateTime.Now-StartTime).TotalSeconds*60*60,0));
+		", ISK: " + Math.Round((TransferredISKInt+CurrentISKInt)/(double)1000,0) + 
+		"k (" + Math.Round((TransferredISKInt+CurrentISKInt)/(DateTime.Now-StartTime).TotalSeconds*60*60/1000,0) + 
+		"k/h), rats: " + ListRatOverviewEntry?.Length +
+		", ateroids: " + ListAsteroidOverviewEntry?.Length +
+		", offload count: " + OffloadCount);
+//		", nextAct: " + NextActivity?.Method?.Name);
+        t1 = DateTime.Now;
+        if ((t1.Hour == t2.Hour) && (t1.Minute > t2.Minute) && stopTime)
+        {
+//          Host.Log(t1.ToString("HH:mm"));
+         Host.Log("Shutting down by time");
+         InitiateDockToOrWarpToBookmark(StationBookmark);
+	  Host.Delay(60000);
+          Sanderling.KeyboardPressCombined(new[]{ VirtualKeyCode.LMENU, VirtualKeyCode.SHIFT, VirtualKeyCode.VK_Q});
+System.Diagnostics.Process.Start("Shutdown", "-s -t 10");
+          Host.Break();
+        }
 
 	CloseModalUIElement();
 	
@@ -133,7 +168,12 @@ Func<object>	MainStep()
 		}
 		
 		if(!(0 < ListAsteroidOverviewEntry?.Length))
-			InitiateDockToOrWarpToBookmark(MiningSiteBookmark);
+		{
+                	Random rnd = new Random();
+            		int randomNumber = rnd.Next(0, MiningSiteBookmarks.Length);
+//			InitiateDockToOrWarpToBookmark(MiningSiteBookmark);
+			InitiateDockToOrWarpToBookmark(MiningSiteBookmarks[randomNumber]);
+		}
 	}
 
 	ModuleMeasureAllTooltip();
@@ -218,11 +258,32 @@ Func<object>	DefenseStep()
 
 Func<object> InBeltMineStep()
 {
+if (null != WindowInventory)
+{
+  var EstISK = WindowInventory?.LabelText?.FirstOrDefault(c => c?.Text?.RegexMatchSuccess(@"Est", RegexOptions.IgnoreCase) ?? false);
+  if (null != EstISK)
+  {
+var EstISKtxt = EstISK.Text.Replace(" ", String.Empty);
+//Host.Log(EstISK);
+//Host.Log(EstISK.Substring(0,EstISK.IndexOf("ISK")));
+//EstISKInt = Convert.ToInt32(EstISK.Substring(0,EstISK.IndexOf("ISK")));
+//Host.Log(EstISKInt);
+//Host.Delay(4000);
+//Host.Log(Math.Round(EstISKInt/(DateTime.Now-StartTime).TotalSeconds*60*60,0));
+ CurrentISKInt = Convert.ToInt32(EstISKtxt.Substring(0,EstISKtxt.IndexOf("ISK")));
+ }
+}
+//Host.Break();
 	if (DefenseEnter)
 	{
 		Host.Log("enter defense.");
 		return DefenseStep;
 	}
+
+        if (!(0 < MiningRange))
+        {
+        	ModuleMeasureAllTooltip();
+        }
 
 	EnsureWindowInventoryOpenOreHold();
 
@@ -239,7 +300,6 @@ Func<object> InBeltMineStep()
 	
 	var	SetTargetAsteroidInRange	=
 		SetTargetAsteroid?.Where(target => target?.DistanceMax <= MiningRange)?.ToArray();
-
 	Host.Log("targeted asteroids in range: " + SetTargetAsteroidInRange?.Length);
 	if(0 < SetTargetAsteroidInRange?.Length)
 	{
@@ -415,6 +475,8 @@ void UnloadToHangar()
 		
 		Sanderling.MouseDragAndDrop(OreHoldItem, ItemHangar);
 	}
+	TransferredISKInt += CurrentISKInt;
+      CurrentISKInt = 0;
 }
 
 bool InitiateDockToOrWarpToBookmark(string Bookmark)
@@ -580,3 +642,9 @@ void OffloadCountUpdate()
 
 	LastCheckOreHoldFillPercent = OreHoldFillPercentSynced;
 }
+        public void Log(string ss)
+        {
+            StreamWriter logwriter = File.AppendText("log.txt");
+            logwriter.Write(DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss") + " " + ss + "\n");
+            logwriter.Close();
+        }
